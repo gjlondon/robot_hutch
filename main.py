@@ -13,7 +13,7 @@ def main(argv):
     if argv is None:
         argv = sys.argv
 
-    tick_length = 2
+    tick_length = 1
     board_height = 10
     board = Board(board_height=board_height, parthenogenesis=False)
     game_clock = Clock(board, tick_length=tick_length, debug=False)

@@ -91,8 +91,8 @@ class Robot:
         should_update_status = message['update_status']
 
         if should_update_status:
-            messages_from_neighbors = mailbox.check_for_mail()
-            num_living_neighbors = len(messages_from_neighbors)
+            living_neighbors = mailbox.check_for_mail()
+            num_living_neighbors = len(living_neighbors)
             if self.alive:
                 if num_living_neighbors < 2 or num_living_neighbors > 3:
                     self.alive = False
@@ -103,15 +103,17 @@ class Robot:
                     if self.parthenogenesis and random.random() > .995:
                         self.alive = True
 
-        if should_heartbeat and self.alive:
-                self.broadcast_to_neighbors(mailbox)
+        if should_heartbeat:
+            self.broadcast_to_neighbors(mailbox)
 
         ch.basic_ack(method.delivery_tag)
         mailbox.acknowledge_batch()
         mailbox.tell_clock_turn_is_completed(turn_number)
 
     def broadcast_to_neighbors(self, mailbox: Mailbox):
-        message = self.address
+        message = {"address": self.address,
+                   "alive": self.alive}
+        message_body = json.dumps(message)
 
         for neighbor_mailbox in self.neighbor_mailbox_names:
-            mailbox.send_message_to_neighbor(neighbor_mailbox, message)
+            mailbox.send_status_to_neighbors(neighbor_mailbox, message_body)

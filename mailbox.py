@@ -46,32 +46,36 @@ class Mailbox:
                                          queue=from_clock_queue_result.method.queue)
 
     def check_for_mail(self):
-        messages = []
+        living_neighbors = []
         all_messages_read = False
-        empty_results = 0
+        updated_neighbors = set()
         while not all_messages_read:
             method, properties, body = self.neighbor_channel.basic_get(self.incoming_mailbox)
             if body is None:
-                # TODO figure out why we get empty messages when the queue is not empty
-                # ended up with 30 through experimentation
-                time.sleep(empty_results / 30)
-                empty_results += 1
-                # messages seem to be not showing up immediately sometimes
-                # problem gets worse with larger boards
-                if empty_results > self.board_height:
-                    all_messages_read = True
+                # RabbitMQ will sometimes give back empty messages even when it's not actually empty
+                # (or maybe the neighbor messages have just not arrived yet, even though
+                # they've been confirmed as sent) But in either case, getting an empty message
+                # is not a reliable signal that we should stop consuming
+                continue
             else:
                 self.unacked_message_tags.append(method.delivery_tag)
-                messages.append(body)
-        # in case of duplicate messages, only allow one message per neighbor address
-        return set(messages)
+                message = json.loads(body)
+                sender_address = message['address']
+                sender_is_alive = message['alive']
+                updated_neighbors.add(sender_address)
+                if sender_is_alive:
+                    living_neighbors.append(sender_address)
+                if len(updated_neighbors) == 8:  # received an update from all neighbors
+                    all_messages_read = True
+        # in case of duplicate messages, only allow one life-status per neighbor address
+        return set(living_neighbors)
 
     def acknowledge_batch(self):
         for tag in self.unacked_message_tags:
             self.neighbor_channel.basic_ack(delivery_tag=tag)
         self.unacked_message_tags = []
 
-    def send_message_to_neighbor(self, neighbor_mailbox, message_body):
+    def send_status_to_neighbors(self, neighbor_mailbox, message_body):
         confirmed = False
         while not confirmed:
             confirmed = self.neighbor_channel.basic_publish(exchange='',
