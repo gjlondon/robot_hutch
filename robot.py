@@ -1,5 +1,6 @@
 import functools
 import itertools
+import json
 import random
 import threading
 
@@ -49,35 +50,21 @@ class Robot:
     def __repr__(self):
         return self.__str__()
 
-    def start_playing(self):
+    def start_running(self):
         incoming_mailbox_name = self.incoming_mailbox_name
         robot = self
         mailbox_initialized = threading.Event()
         allowed_to_start = threading.Event()
         fully_initialized = threading.Event()
+        update_status = self.update_status
 
         class ScheduleThread(threading.Thread):
             @classmethod
             def run(cls):
-                mailbox = Mailbox(incoming_mailbox_name)
+                mailbox = Mailbox(incoming_mailbox_name, update_status)
                 robot.mailbox = mailbox
                 mailbox_initialized.set()
-
-                while not allowed_to_start.is_set():
-                    # give other robots time to initialize their queues
-                    pass
-
-                # basic_consume won't let us pass arguments to the callback, so
-                # make the callback a partial function that has the argument it needs
-                update_status = functools.partial(self.update_status, mailbox)
-                mailbox.clock_channel.basic_consume(update_status,
-                                                    queue=mailbox.queue_from_clock)
-
-                # send messages once at game start
-                # so robots know who if their neigbbors are alive on the first turn
-                if self.alive:
-                    self.broadcast_to_neighbors(mailbox)
-                fully_initialized.set()
+                mailbox.report_mailbox_ready()
                 # listen forever for ticks from the game clock
                 mailbox.clock_channel.start_consuming()
 
@@ -96,29 +83,30 @@ class Robot:
             print("thread not yet available")
 
     def update_status(self, mailbox, ch, method, properties, body):
-        tick_count = body
-        messages_from_neighbors = mailbox.check_for_mail()
-        num_living_neighbors = len(messages_from_neighbors)
-        if self.alive:
-            if num_living_neighbors < 2 or num_living_neighbors > 3:
-                self.alive = False
-                # print('{} died on round {} because messages were: {}. Neighbors are {}'.format(self.address,
-                #                                                                                tick_count,
-                #                                                                                messages_from_neighbors,
-                #                                                                                self.neighbor_mailbox_names))
-        else:
-            if num_living_neighbors == 3:
-                self.alive = True
-            else:
-                if self.parthenogenesis and random.random() > .995:
-                    self.alive = True
+        message = json.loads(body)
+        turn_number = message['turn_number']
+        should_heartbeat = message['heartbeat']
+        should_update_status = message['update_status']
 
-        if self.alive:
-            self.broadcast_to_neighbors(mailbox)
+        if should_update_status:
+            messages_from_neighbors = mailbox.check_for_mail()
+            num_living_neighbors = len(messages_from_neighbors)
+            if self.alive:
+                if num_living_neighbors < 2 or num_living_neighbors > 3:
+                    self.alive = False
+            else:
+                if num_living_neighbors == 3:
+                    self.alive = True
+                else:
+                    if self.parthenogenesis and random.random() > .995:
+                        self.alive = True
+
+        if should_heartbeat and self.alive:
+                self.broadcast_to_neighbors(mailbox)
 
         ch.basic_ack(method.delivery_tag)
         mailbox.acknowledge_batch()
-        mailbox.tell_clock_turn_is_completed()
+        mailbox.tell_clock_turn_is_completed(turn_number)
 
     def broadcast_to_neighbors(self, mailbox: Mailbox):
         message = self.address

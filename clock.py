@@ -1,3 +1,4 @@
+import json
 import time
 
 import pika
@@ -23,10 +24,12 @@ class Clock:
         # inbound channel listens for acknowledgement from robots to make sure each has
         # finished updating before game moves on to next turn
         self.inbound_channel = self.connection.channel()
-        self.inbound_channel.queue_declare(queue=GAME_CLOCK_INBOUND_QUEUE_NAME)
+        self.inbound_channel.queue_declare(queue=GAME_CLOCK_INBOUND_QUEUE_NAME, durable=False)
         self.inbound_channel.basic_consume(self.receive_robot_update,
                                            queue=GAME_CLOCK_INBOUND_QUEUE_NAME)
+        self.ready_robots = set()
         self.updated_robots = set()
+        self.all_robots_ready = False
 
         self.tick_length = tick_length
         self.tick_count = 0
@@ -37,33 +40,56 @@ class Clock:
             self._synchronous_board = [[robot.alive for robot in row] for row in board._board]
 
     def receive_robot_update(self, ch, method, properties, body):
-        # body will be the address of the robot who's telling us it finished its turn
-        self.updated_robots.add(body)
+        message = json.loads(body)
+        try:
+            from_robot = message['address']
+            status = message['status']
+        except KeyError as e:
+            print("invalid message received to inbound clock queue {}".format(message))
+            raise e
+        if not self.all_robots_ready:
+            if status == "mailbox_ready":
+                self.ready_robots.add(from_robot)
+                if len(self.ready_robots) == self.board_size:
+                    self.all_robots_ready = True
+                    self.tick(first_tick=True)
+        else:
+            if status == 'turn_completed':
+                self.updated_robots.add(from_robot)
+
+                # game can precede to next turn once all robots are done updating
+                if len(self.updated_robots) == self.board_size:
+                    self.updated_robots = set()
+                    self.tick()
+            else:
+                print("unsure how to handle message {}".format(message))
         ch.basic_ack(method.delivery_tag)
 
-        # game can procedue to next turn once all robots are done updating
-        if len(self.updated_robots) == self.board_size:
-            self.updated_robots = set()
-            self.tick()
-
-    def start(self):
+    def start_game(self):
         self.board.start_robots()
-        self.tick(skip_pause=True)
         self.inbound_channel.start_consuming()
 
-    def tick(self, skip_pause=False):
-        print("round #{}".format(self.tick_count))
-        print(self.board)
-        if self.debug:
-            print(Board.print_boolean_board(self._synchronous_board))
-            self._check_boards_agree()
-            self._synchronous_tick()
+    def tick(self, skip_pause=False, first_tick=False):
+        message = {"turn_number": self.tick_count,
+                   'heartbeat': True}
+        if first_tick:
+            message["update_status"] = False
+        else:
+            message["update_status"] = True
+            print("round #{}".format(self.tick_count))
+            print(self.board)
+            if self.debug:
+                print(Board.print_boolean_board(self._synchronous_board))
+                self._check_boards_agree()
+                self._synchronous_tick()
 
         if self.board.extinct:
             raise ExtinctionEvent
+
+        body = json.dumps(message)
         self.outbound_channel.basic_publish(exchange=self.exchange_name,
                                             routing_key='',
-                                            body=str(self.tick_count))
+                                            body=body)
         if not skip_pause:
             time.sleep(self.tick_length)
         self.tick_count += 1
@@ -74,7 +100,8 @@ class Clock:
         for i in range(board_height):
             for j in range(board_height):
                 if self.board._board[i][j].alive != self._synchronous_board[i][j]:
-                    import ipdb ; ipdb.set_trace()
+                    import ipdb;
+                    ipdb.set_trace()
 
     def _synchronous_tick(self):
         synchronous_board = self._synchronous_board

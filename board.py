@@ -43,27 +43,11 @@ class Board:
 
     def start_robots(self):
         print("waking up robots.")
-        mailboxes_initialized = []
-        start_permits = []
-        robots_initialized = []
         for row in self._board:
             for robot in row:
-                initialized, allowed_to_start, fully_initialized = robot.start_playing()
-                mailboxes_initialized.append(initialized)
-                start_permits.append(allowed_to_start)
-                robots_initialized.append(fully_initialized)
+                robot.start_running()
                 print(".", end='')
-        print("")
-        # wait for all the queues to be set up before proceeding
-        # can't send messages to queues that don't exist yet or they'll be lost
-        while not all([event.is_set() for event in mailboxes_initialized]):
-            pass
-        print("mailboxes initialized")
-        for permit in start_permits:
-            permit.set()
-        while not all([event.is_set() for event in robots_initialized]):
-            # give them time to send their first messages
-            pass
+        print("\n")
         print("robots activated")
 
     @property
