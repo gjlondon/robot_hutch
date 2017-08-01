@@ -24,7 +24,8 @@ class Clock:
         # inbound channel listens for acknowledgement from robots to make sure each has
         # finished updating before game moves on to next turn
         self.inbound_channel = self.connection.channel()
-        self.inbound_channel.queue_declare(queue=GAME_CLOCK_INBOUND_QUEUE_NAME, durable=False)
+        self.inbound_channel.queue_declare(queue=GAME_CLOCK_INBOUND_QUEUE_NAME,
+                                           durable=False, auto_delete=True)
         self.inbound_channel.basic_consume(self.receive_robot_update,
                                            queue=GAME_CLOCK_INBOUND_QUEUE_NAME)
         self.ready_robots = set()

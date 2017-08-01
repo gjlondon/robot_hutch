@@ -16,6 +16,7 @@ class Robot:
         self.row_number = row_number
         self.alive = starts_alive
         self.parthenogenesis = parthenogenesis
+        self.board_height = board_height
         self.enumerate_neighborhood_mailbox_addresses(board_height, column_number, row_number)
 
     @staticmethod
@@ -57,11 +58,12 @@ class Robot:
         allowed_to_start = threading.Event()
         fully_initialized = threading.Event()
         update_status = self.update_status
+        board_height = self.board_height
 
         class ScheduleThread(threading.Thread):
             @classmethod
             def run(cls):
-                mailbox = Mailbox(incoming_mailbox_name, update_status)
+                mailbox = Mailbox(incoming_mailbox_name, update_status, board_height)
                 robot.mailbox = mailbox
                 mailbox_initialized.set()
                 mailbox.report_mailbox_ready()

@@ -8,20 +8,15 @@ __author__ = 'rogueleaderr'
 
 import sys
 
-DEBUG = False
-
 
 def main(argv):
     if argv is None:
         argv = sys.argv
 
     tick_length = 2
-    board_height = 5
+    board_height = 10
     board = Board(board_height=board_height, parthenogenesis=False)
-    game_clock = Clock(board, tick_length=tick_length, debug=DEBUG)
-    # TODO message based initialization
-    # TODO use topic queues instead of one queue per robot
-    # TODO initialize robots using queues
+    game_clock = Clock(board, tick_length=tick_length, debug=False)
     try:
         game_clock.start_game()
     except ExtinctionEvent:

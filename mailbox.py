@@ -14,25 +14,28 @@ class Mailbox:
     and that mailbox is created inside of that robot's one personal thread
     """
 
-    def __init__(self, mailbox_address, clock_tick_callback):
+    def __init__(self, mailbox_address, clock_tick_callback, board_height):
         self.unacked_message_tags = []
         self.connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
-        self.neighbor_channel = self.connection.channel()
         self.clock_channel = self.connection.channel()
+        self.neighbor_channel = self.connection.channel()
+        self.mailbox_name = mailbox_address
+        self.board_height = board_height
+
+        # Turn on delivery confirmations since neighbor channels can get overloaded
+        self.neighbor_channel.confirm_delivery()
 
         # connect to neighbors
         queue_declare_result = self.neighbor_channel.queue_declare(queue=mailbox_address,
                                                                    exclusive=True)
-        self.channel_status = queue_declare_result
         self.incoming_mailbox = queue_declare_result.method.queue
-        self.mailbox_name = mailbox_address
 
         # connect to game clock
         from_clock_queue_result = self.clock_channel.queue_declare(exclusive=True)
         self.clock_channel.queue_bind(exchange=GAME_CLOCK_OUTBOUND_EXCHANGE_NAME,
                                       queue=from_clock_queue_result.method.queue)
 
-        self.clock_channel.queue_declare(queue=GAME_CLOCK_INBOUND_QUEUE_NAME)
+        self.clock_channel.queue_declare(queue=GAME_CLOCK_INBOUND_QUEUE_NAME, auto_delete=True)
 
         # the robot update_status function needs a reference to the mailbox so it
         # can send outgoing messages but basic_consume won't let us pass arguments
@@ -50,10 +53,12 @@ class Mailbox:
             method, properties, body = self.neighbor_channel.basic_get(self.incoming_mailbox)
             if body is None:
                 # TODO figure out why we get empty messages when the queue is not empty
-                time.sleep(.1)
+                # ended up with 30 through experimentation
+                time.sleep(empty_results / 30)
                 empty_results += 1
                 # messages seem to be not showing up immediately sometimes
-                if empty_results > 3:
+                # problem gets worse with larger boards
+                if empty_results > self.board_height:
                     all_messages_read = True
             else:
                 self.unacked_message_tags.append(method.delivery_tag)
@@ -67,9 +72,15 @@ class Mailbox:
         self.unacked_message_tags = []
 
     def send_message_to_neighbor(self, neighbor_mailbox, message_body):
-        self.neighbor_channel.basic_publish(exchange='',
-                                            routing_key=neighbor_mailbox,
-                                            body=message_body)
+        confirmed = False
+        while not confirmed:
+            confirmed = self.neighbor_channel.basic_publish(exchange='',
+                                                            routing_key=neighbor_mailbox,
+                                                            body=message_body)
+            if not confirmed:
+                # system is having trouble keeping up. give it a sec so messages are all
+                # available by the time of the next update_status
+                time.sleep(.1)
 
     def tell_clock_turn_is_completed(self, turn_number):
         message = {"address": self.mailbox_name,
